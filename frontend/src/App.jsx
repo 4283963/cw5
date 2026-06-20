@@ -4,6 +4,7 @@ import StatsPanel from './components/StatsPanel'
 import ScanPanel from './components/ScanPanel'
 import PackageHistory from './components/PackageHistory'
 import GateControlPanel from './components/GateControlPanel'
+import SlotRoutingPanel from './components/SlotRoutingPanel'
 import AnomalyModal from './components/AnomalyModal'
 import { useWebSocket } from './hooks/useWebSocket'
 import { api } from './services/api'
@@ -15,6 +16,7 @@ export default function App() {
   const [checkHistory, setCheckHistory] = useState([])
   const [stats, setStats] = useState({ total: 0, normal: 0, anomaly: 0 })
   const [currentScan, setCurrentScan] = useState('')
+  const [routeRefreshSignal, setRouteRefreshSignal] = useState(0)
   const [gates, setGates] = useState([
     { gate_id: 'gate-1', action: 'normal' },
     { gate_id: 'gate-2', action: 'normal' },
@@ -52,6 +54,7 @@ export default function App() {
           is_anomaly: payload.is_anomaly,
           timestamp: payload.timestamp,
           weight_diff_pct: payload.weight_diff_pct,
+          routed_slot: payload.routed_slot,
         },
         ...prev,
       ].slice(0, 50))
@@ -70,6 +73,7 @@ export default function App() {
           is_anomaly: payload.is_anomaly,
           timestamp: payload.timestamp,
           weight_diff_pct: payload.weight_diff_pct,
+          routed_slot: payload.routed_slot,
         },
         ...prev,
       ].slice(0, 50))
@@ -95,11 +99,16 @@ export default function App() {
       )
     })
 
+    const unsubRoute = subscribe('route_update', () => {
+      setRouteRefreshSignal((n) => n + 1)
+    })
+
     return () => {
       unsubAnomaly()
       unsubNormal()
       unsubScan()
       unsubGate()
+      unsubRoute()
     }
   }, [subscribe])
 
@@ -136,6 +145,8 @@ export default function App() {
             <PackageHistory packages={packages} />
           </div>
         </div>
+
+        <SlotRoutingPanel refreshSignal={routeRefreshSignal} />
 
         <div className="bg-slate-800 rounded-2xl p-5 shadow-xl border border-slate-700">
           <h3 className="text-xl font-bold text-white mb-4">测试运单号（已预置预报数据）</h3>

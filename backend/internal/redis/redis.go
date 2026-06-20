@@ -136,6 +136,7 @@ func SaveCheckResult(result *models.CheckResult) error {
 		"is_anomaly":      result.IsAnomaly,
 		"timestamp":       result.Timestamp.Format(time.RFC3339),
 		"weight_diff_pct": result.WeightDiffPct,
+		"routed_slot":     result.RoutedSlot,
 	}
 	entryData, _ := json.Marshal(entry)
 	if err := Client.LPush(ctx, keyRecentPackages, entryData).Err(); err != nil {

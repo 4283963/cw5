@@ -17,6 +17,10 @@ func main() {
 		log.Printf("Warning: Failed to seed mock data: %v", err)
 	}
 
+	if err := redis.SeedSlots(); err != nil {
+		log.Printf("Warning: Failed to seed slots: %v", err)
+	}
+
 	hub := ws.GetHub()
 	go hub.Run()
 

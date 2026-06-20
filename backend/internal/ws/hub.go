@@ -172,3 +172,7 @@ func (h *Hub) BroadcastGateState(gateAction *models.GateAction) {
 func (h *Hub) BroadcastScan(scanEvent *models.ScanEvent) {
 	h.BroadcastMessage(models.WSMessageTypeScan, scanEvent)
 }
+
+func (h *Hub) BroadcastRouteUpdate() {
+	h.BroadcastMessage(models.WSMessageTypeRouteUpdate, nil)
+}

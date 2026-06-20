@@ -86,7 +86,7 @@ func (s *WeightCheckService) TriggerGate(gateID string, trackingNumber string, i
 	return gateAction, nil
 }
 
-func (s *WeightCheckService) ProcessPackage(trackingNumber string, actualWeight float64, gateID string) (result *models.CheckResult, gateAction *models.GateAction, err error) {
+func (s *WeightCheckService) ProcessPackage(trackingNumber string, actualWeight float64, fallbackGateID string) (result *models.CheckResult, gateAction *models.GateAction, err error) {
 	token, ok, lerr := redis.AcquireLock(trackingNumber)
 	if lerr != nil {
 		return nil, nil, fmt.Errorf("获取处理锁失败: %v", lerr)
@@ -107,7 +107,15 @@ func (s *WeightCheckService) ProcessPackage(trackingNumber string, actualWeight 
 		return nil, nil, err
 	}
 
-	gateAction, err = s.TriggerGate(gateID, trackingNumber, result.IsAnomaly)
+	targetSlot := fallbackGateID
+	if !result.IsAnomaly {
+		if slot, ok := redis.ResolveSlot(result.Destination); ok {
+			targetSlot = slot
+		}
+	}
+	result.RoutedSlot = targetSlot
+
+	gateAction, err = s.TriggerGate(targetSlot, trackingNumber, result.IsAnomaly)
 	if err != nil {
 		return result, nil, err
 	}

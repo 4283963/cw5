@@ -35,6 +35,7 @@ type CheckResult struct {
 	OrderNo        string    `json:"order_no"`
 	Destination    string    `json:"destination"`
 	SKU            string    `json:"sku"`
+	RoutedSlot     string    `json:"routed_slot"`
 	Timestamp      time.Time `json:"timestamp"`
 }
 
@@ -56,8 +57,9 @@ type WebSocketMessage struct {
 }
 
 const (
-	WSMessageTypeAnomaly   = "anomaly"
-	WSMessageTypeNormal    = "normal"
-	WSMessageTypeGateState = "gate_state"
-	WSMessageTypeScan      = "scan"
+	WSMessageTypeAnomaly     = "anomaly"
+	WSMessageTypeNormal      = "normal"
+	WSMessageTypeGateState   = "gate_state"
+	WSMessageTypeScan        = "scan"
+	WSMessageTypeRouteUpdate = "route_update"
 )

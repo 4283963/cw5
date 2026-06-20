@@ -43,6 +43,19 @@ func Setup() *gin.Engine {
 			gates.POST("/control", handler.ControlGate)
 			gates.GET("/state/:gate_id", handler.GetGateState)
 		}
+
+		routing := api.Group("/routing")
+		{
+			routing.GET("", handler.GetRoutes)
+			routing.POST("/assign", handler.AssignRoute)
+			routing.DELETE("/route/:route", handler.ClearRouteHandler)
+		}
+
+		slots := api.Group("/slots")
+		{
+			slots.GET("", handler.GetSlots)
+			slots.DELETE("/:slot_id", handler.ClearSlotHandler)
+		}
 	}
 
 	r.GET("/ws", handler.WebSocket)

@@ -46,6 +46,11 @@ export default function PackageHistory({ packages }) {
                         {pkg.tracking_number}
                       </p>
                       <p className="text-xs text-slate-400">{pkg.timestamp}</p>
+                      {pkg.routed_slot && (
+                        <span className="inline-block mt-1 px-2 py-0.5 rounded bg-sky-900 bg-opacity-50 border border-sky-700 text-sky-300 text-xs font-mono">
+                          → {pkg.routed_slot}
+                        </span>
+                      )}
                     </div>
                   </div>
 

@@ -225,3 +225,80 @@ func (h *PackageHandler) Health(c *gin.Context) {
 		"time":    time.Now().Format(time.RFC3339),
 	})
 }
+
+type RouteAssignmentRequest struct {
+	Route  string `json:"route" binding:"required"`
+	SlotID string `json:"slot_id" binding:"required"`
+}
+
+func (h *PackageHandler) GetSlots(c *gin.Context) {
+	slots, err := redis.GetAllSlots()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch slots"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"slots":            slots,
+		"available_routes": models.AvailableRoutes,
+	})
+}
+
+func (h *PackageHandler) AssignRoute(c *gin.Context) {
+	var req RouteAssignmentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request: " + err.Error()})
+		return
+	}
+
+	if err := redis.SetRoute(req.Route, req.SlotID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to assign route: " + err.Error()})
+		return
+	}
+
+	slot, _ := redis.GetSlot(req.SlotID)
+	ws.GetHub().BroadcastRouteUpdate()
+
+	c.JSON(http.StatusOK, slot)
+}
+
+func (h *PackageHandler) ClearRouteHandler(c *gin.Context) {
+	route := c.Param("route")
+	if route == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Route is required"})
+		return
+	}
+
+	if err := redis.ClearRoute(route); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear route: " + err.Error()})
+		return
+	}
+
+	ws.GetHub().BroadcastRouteUpdate()
+	c.JSON(http.StatusOK, gin.H{"message": "route cleared", "route": route})
+}
+
+func (h *PackageHandler) ClearSlotHandler(c *gin.Context) {
+	slotID := c.Param("slot_id")
+	if slotID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Slot ID is required"})
+		return
+	}
+
+	if err := redis.ClearSlot(slotID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to clear slot: " + err.Error()})
+		return
+	}
+
+	slot, _ := redis.GetSlot(slotID)
+	ws.GetHub().BroadcastRouteUpdate()
+	c.JSON(http.StatusOK, slot)
+}
+
+func (h *PackageHandler) GetRoutes(c *gin.Context) {
+	routes, err := redis.GetAllRoutes()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch routes"})
+		return
+	}
+	c.JSON(http.StatusOK, routes)
+}

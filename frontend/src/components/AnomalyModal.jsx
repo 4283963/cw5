@@ -44,7 +44,7 @@ export default function AnomalyModal({ anomaly, onClose }) {
 
           <div className="p-6 space-y-4">
             <div className="bg-white bg-opacity-10 rounded-xl p-4 backdrop-blur-sm">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
                 <div className="flex items-center gap-3">
                   <Package className="w-5 h-5 text-red-200" />
                   <div>
@@ -71,6 +71,13 @@ export default function AnomalyModal({ anomaly, onClose }) {
                   <div>
                     <p className="text-red-200 text-sm">SKU</p>
                     <p className="text-white font-mono text-xl font-bold">{anomaly.sku}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 md:col-span-2">
+                  <AlertTriangle className="w-5 h-5 text-red-200" />
+                  <div>
+                    <p className="text-red-200 text-sm">拦截闸口</p>
+                    <p className="text-white font-mono text-xl font-bold">{anomaly.routed_slot || 'gate-1'}</p>
                   </div>
                 </div>
               </div>

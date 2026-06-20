@@ -55,4 +55,20 @@ export const api = {
     }),
 
   getGateState: (gateId) => apiRequest(`/gates/state/${gateId}`),
+
+  getSlots: () => apiRequest('/slots'),
+
+  getRoutes: () => apiRequest('/routing'),
+
+  assignRoute: (route, slotId) =>
+    apiRequest('/routing/assign', {
+      method: 'POST',
+      body: JSON.stringify({ route, slot_id: slotId }),
+    }),
+
+  clearRoute: (route) =>
+    apiRequest(`/routing/route/${route}`, { method: 'DELETE' }),
+
+  clearSlot: (slotId) =>
+    apiRequest(`/slots/${slotId}`, { method: 'DELETE' }),
 }
