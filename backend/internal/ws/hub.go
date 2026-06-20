@@ -4,25 +4,39 @@ import (
 	"encoding/json"
 	"log"
 	"sync"
+	"time"
 
+	"cw5/backend/internal/config"
 	"cw5/backend/internal/models"
 
 	"github.com/gorilla/websocket"
 )
 
+const (
+	clientSendBuf     = 64
+	broadcastSendWait = 500 * time.Millisecond
+	pingInterval      = 30 * time.Second
+)
+
+type Client struct {
+	conn *websocket.Conn
+	send chan []byte
+	hub  *Hub
+}
+
 type Hub struct {
-	clients    map[*websocket.Conn]bool
+	clients    map[*Client]bool
 	broadcast  chan []byte
-	register   chan *websocket.Conn
-	unregister chan *websocket.Conn
-	mu         sync.Mutex
+	register   chan *Client
+	unregister chan *Client
+	mu         sync.RWMutex
 }
 
 var hub = &Hub{
-	clients:    make(map[*websocket.Conn]bool),
+	clients:    make(map[*Client]bool),
 	broadcast:  make(chan []byte, 256),
-	register:   make(chan *websocket.Conn),
-	unregister: make(chan *websocket.Conn),
+	register:   make(chan *Client, 16),
+	unregister: make(chan *Client, 16),
 }
 
 func GetHub() *Hub {
@@ -42,31 +56,88 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			if _, ok := h.clients[client]; ok {
 				delete(h.clients, client)
-				client.Close()
+				close(client.send)
 			}
 			h.mu.Unlock()
 			log.Printf("WebSocket client disconnected, total: %d", len(h.clients))
 
 		case message := <-h.broadcast:
-			h.mu.Lock()
+			h.mu.RLock()
 			for client := range h.clients {
-				if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
-					log.Printf("WebSocket write error: %v", err)
-					client.Close()
-					delete(h.clients, client)
+				select {
+				case client.send <- message:
+				default:
+					log.Printf("WebSocket client send buffer full, dropping slow client")
+					go func(c *Client) { c.hub.unregister <- c }(client)
 				}
 			}
-			h.mu.Unlock()
+			h.mu.RUnlock()
 		}
 	}
 }
 
-func (h *Hub) RegisterClient(conn *websocket.Conn) {
-	h.register <- conn
+func (h *Hub) ServeWebSocket(conn *websocket.Conn) {
+	client := &Client{
+		conn: conn,
+		send: make(chan []byte, clientSendBuf),
+		hub:  h,
+	}
+
+	h.register <- client
+
+	go client.writePump()
+	client.readPump()
 }
 
-func (h *Hub) UnregisterClient(conn *websocket.Conn) {
-	h.unregister <- conn
+func (c *Client) writePump() {
+	ticker := time.NewTicker(pingInterval)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(config.AppConfig.WSWriteTimeout))
+			if !ok {
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				return
+			}
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(config.AppConfig.WSWriteTimeout))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+func (c *Client) readPump() {
+	defer func() {
+		c.hub.unregister <- c
+		c.conn.Close()
+	}()
+
+	c.conn.SetReadDeadline(time.Now().Add(config.AppConfig.WSReadTimeout))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(config.AppConfig.WSReadTimeout))
+		return nil
+	})
+
+	for {
+		_, _, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+				log.Printf("WebSocket read error: %v", err)
+			}
+			break
+		}
+		c.conn.SetReadDeadline(time.Now().Add(config.AppConfig.WSReadTimeout))
+	}
 }
 
 func (h *Hub) BroadcastMessage(msgType string, payload interface{}) {
@@ -79,7 +150,11 @@ func (h *Hub) BroadcastMessage(msgType string, payload interface{}) {
 		log.Printf("Failed to marshal WebSocket message: %v", err)
 		return
 	}
-	h.broadcast <- data
+	select {
+	case h.broadcast <- data:
+	case <-time.After(broadcastSendWait):
+		log.Printf("Warning: broadcast channel full, dropping message type=%s", msgType)
+	}
 }
 
 func (h *Hub) BroadcastAnomaly(result *models.CheckResult) {

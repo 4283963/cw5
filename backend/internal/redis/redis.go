@@ -8,15 +8,13 @@ import (
 	"time"
 
 	"github.com/go-redis/redis/v8"
+	"github.com/google/uuid"
 
 	"cw5/backend/internal/config"
 	"cw5/backend/internal/models"
 )
 
-var (
-	Client *redis.Client
-	ctx    = context.Background()
-)
+var Client *redis.Client
 
 const (
 	keyPackageForecast = "pkg:forecast:%s"
@@ -24,22 +22,73 @@ const (
 	keyGateState       = "gate:state:%s"
 	keyGateHistory     = "gate:history"
 	keyRecentPackages  = "pkg:recent"
+	keyPackageLock     = "pkg:lock:%s"
 )
+
+var unlockScript = redis.NewScript(`
+if redis.call("get", KEYS[1]) == ARGV[1] then
+	return redis.call("del", KEYS[1])
+else
+	return 0
+end
+`)
 
 func Init() {
 	Client = redis.NewClient(&redis.Options{
-		Addr:     config.AppConfig.RedisAddr,
-		Password: config.AppConfig.RedisPassword,
-		DB:       config.AppConfig.RedisDB,
+		Addr:         config.AppConfig.RedisAddr,
+		Password:     config.AppConfig.RedisPassword,
+		DB:           config.AppConfig.RedisDB,
+		DialTimeout:  3 * time.Second,
+		ReadTimeout:  2 * time.Second,
+		WriteTimeout: 2 * time.Second,
+		PoolSize:     20,
+		MinIdleConns: 5,
 	})
 
+	ctx, cancel := context.WithTimeout(context.Background(), config.AppConfig.RedisOpTimeout)
+	defer cancel()
 	if err := Client.Ping(ctx).Err(); err != nil {
 		log.Fatalf("Failed to connect to Redis: %v", err)
 	}
 	log.Println("Connected to Redis successfully")
 }
 
+func withTimeout() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), config.AppConfig.RedisOpTimeout)
+}
+
+func AcquireLock(trackingNumber string) (token string, ok bool, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), config.AppConfig.RedisOpTimeout)
+	defer cancel()
+
+	token = uuid.NewString()
+	key := fmt.Sprintf(keyPackageLock, trackingNumber)
+	ok, err = Client.SetNX(ctx, key, token, config.AppConfig.RedisLockTimeout).Result()
+	if err != nil {
+		return "", false, err
+	}
+	return token, ok, nil
+}
+
+func ReleaseLock(trackingNumber string, token string) {
+	ctx, cancel := context.WithTimeout(context.Background(), config.AppConfig.RedisOpTimeout)
+	defer cancel()
+
+	key := fmt.Sprintf(keyPackageLock, trackingNumber)
+	res, err := unlockScript.Run(ctx, Client, []string{key}, token).Result()
+	if err != nil {
+		log.Printf("Warning: failed to release lock for %s: %v", trackingNumber, err)
+		return
+	}
+	if n, ok := res.(int64); ok && n == 0 {
+		log.Printf("Warning: lock for %s already expired or held by another token", trackingNumber)
+	}
+}
+
 func SavePackageForecast(pkg *models.PackageForecast) error {
+	ctx, cancel := withTimeout()
+	defer cancel()
+
 	key := fmt.Sprintf(keyPackageForecast, pkg.TrackingNumber)
 	data, err := json.Marshal(pkg)
 	if err != nil {
@@ -49,6 +98,9 @@ func SavePackageForecast(pkg *models.PackageForecast) error {
 }
 
 func GetPackageForecast(trackingNumber string) (*models.PackageForecast, error) {
+	ctx, cancel := withTimeout()
+	defer cancel()
+
 	key := fmt.Sprintf(keyPackageForecast, trackingNumber)
 	data, err := Client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
@@ -65,6 +117,9 @@ func GetPackageForecast(trackingNumber string) (*models.PackageForecast, error) 
 }
 
 func SaveCheckResult(result *models.CheckResult) error {
+	ctx, cancel := withTimeout()
+	defer cancel()
+
 	data, err := json.Marshal(result)
 	if err != nil {
 		return err
@@ -72,7 +127,9 @@ func SaveCheckResult(result *models.CheckResult) error {
 	if err := Client.LPush(ctx, keyCheckHistory, data).Err(); err != nil {
 		return err
 	}
-	Client.LTrim(ctx, keyCheckHistory, 0, 99)
+	if err := Client.LTrim(ctx, keyCheckHistory, 0, 99).Err(); err != nil {
+		log.Printf("Warning: LTrim history failed: %v", err)
+	}
 
 	entry := map[string]interface{}{
 		"tracking_number": result.TrackingNumber,
@@ -81,12 +138,20 @@ func SaveCheckResult(result *models.CheckResult) error {
 		"weight_diff_pct": result.WeightDiffPct,
 	}
 	entryData, _ := json.Marshal(entry)
-	Client.LPush(ctx, keyRecentPackages, entryData)
-	Client.LTrim(ctx, keyRecentPackages, 0, 49)
+	if err := Client.LPush(ctx, keyRecentPackages, entryData).Err(); err != nil {
+		log.Printf("Warning: LPush recent failed: %v", err)
+		return nil
+	}
+	if err := Client.LTrim(ctx, keyRecentPackages, 0, 49).Err(); err != nil {
+		log.Printf("Warning: LTrim recent failed: %v", err)
+	}
 	return nil
 }
 
 func GetCheckHistory(limit int64) ([]*models.CheckResult, error) {
+	ctx, cancel := withTimeout()
+	defer cancel()
+
 	if limit <= 0 {
 		limit = 20
 	}
@@ -106,6 +171,9 @@ func GetCheckHistory(limit int64) ([]*models.CheckResult, error) {
 }
 
 func SetGateState(gateID string, action string) error {
+	ctx, cancel := withTimeout()
+	defer cancel()
+
 	key := fmt.Sprintf(keyGateState, gateID)
 	state := map[string]interface{}{
 		"gate_id":   gateID,
@@ -123,6 +191,9 @@ func SetGateState(gateID string, action string) error {
 }
 
 func GetGateState(gateID string) (map[string]interface{}, error) {
+	ctx, cancel := withTimeout()
+	defer cancel()
+
 	key := fmt.Sprintf(keyGateState, gateID)
 	data, err := Client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
@@ -142,6 +213,9 @@ func GetGateState(gateID string) (map[string]interface{}, error) {
 }
 
 func GetRecentPackages(limit int64) ([]map[string]interface{}, error) {
+	ctx, cancel := withTimeout()
+	defer cancel()
+
 	if limit <= 0 {
 		limit = 20
 	}

@@ -35,16 +35,7 @@ func (h *PackageHandler) WebSocket(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to upgrade WebSocket"})
 		return
 	}
-	hub := ws.GetHub()
-	hub.RegisterClient(conn)
-	defer hub.UnregisterClient(conn)
-
-	for {
-		_, _, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-	}
+	ws.GetHub().ServeWebSocket(conn)
 }
 
 type ScanRequest struct {

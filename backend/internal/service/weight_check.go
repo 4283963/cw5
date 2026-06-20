@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"time"
 
@@ -85,13 +86,28 @@ func (s *WeightCheckService) TriggerGate(gateID string, trackingNumber string, i
 	return gateAction, nil
 }
 
-func (s *WeightCheckService) ProcessPackage(trackingNumber string, actualWeight float64, gateID string) (*models.CheckResult, *models.GateAction, error) {
-	result, err := s.CheckWeight(trackingNumber, actualWeight)
+func (s *WeightCheckService) ProcessPackage(trackingNumber string, actualWeight float64, gateID string) (result *models.CheckResult, gateAction *models.GateAction, err error) {
+	token, ok, lerr := redis.AcquireLock(trackingNumber)
+	if lerr != nil {
+		return nil, nil, fmt.Errorf("获取处理锁失败: %v", lerr)
+	}
+	if !ok {
+		return nil, nil, fmt.Errorf("包裹 %s 正在处理中，请勿重复提交", trackingNumber)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("panic recovered in ProcessPackage for %s: %v", trackingNumber, r)
+			err = fmt.Errorf("处理包裹时发生异常: %v", r)
+		}
+		redis.ReleaseLock(trackingNumber, token)
+	}()
+
+	result, err = s.CheckWeight(trackingNumber, actualWeight)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	gateAction, err := s.TriggerGate(gateID, trackingNumber, result.IsAnomaly)
+	gateAction, err = s.TriggerGate(gateID, trackingNumber, result.IsAnomaly)
 	if err != nil {
 		return result, nil, err
 	}
